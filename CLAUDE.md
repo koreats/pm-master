@@ -73,6 +73,10 @@ npm run test -- --testPathPattern=components            # Test directory
 3. `003_realtime_setup.sql` - Realtime configuration
 4. `004_documentation_system.sql` - Documentation features
 5. `005_auth_security_tables.sql` - Security and auth tracking
+6. `006_enhanced_rls_security.sql` - Enhanced RLS security
+7. `007_enhanced_data_integrity.sql` - Data integrity constraints
+8. `008_performance_optimization_indexes.sql` - Performance indexes
+9. `009_security_compliance_validation.sql` - Security compliance
 
 ## 📁 Project Structure
 
@@ -104,7 +108,7 @@ lib/                   # Core library code
 └── utils/            # Utility functions
 
 supabase/             # Database configuration
-└── migrations/       # SQL migration files (001-005)
+└── migrations/       # SQL migration files (001-009)
 
 types/                # TypeScript type definitions
 ├── supabase.ts      # Supabase types

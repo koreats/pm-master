@@ -17,11 +17,12 @@ export class ProgressDataCollector {
    * 마스터플랜 참조 정보를 가져옵니다
    */
   async getMasterPlanReference(): Promise<MasterPlanReference> {
-    // 실제 구현에서는 데이터베이스나 파일 시스템에서 읽어옴
-    // 현재는 마스터플랜.md 파일 내용을 기반으로 하드코딩
+    // 마스터플랜과 태스크리스트 파일 읽기
+    const tasksFromFile = await this.getTasksFromFiles();
+    const completedReports = await this.getCompletedReports();
     
-    const totalTasks = 12; // T-001 ~ T-012
-    const completedTasks = await this.getCompletedTaskCount();
+    const totalTasks = tasksFromFile.length;
+    const completedTasks = completedReports.length;
     
     return {
       phase: this.getCurrentPhase(completedTasks),
@@ -33,39 +34,68 @@ export class ProgressDataCollector {
   }
 
   /**
+   * 태스크리스트.md 파일에서 태스크 목록을 파싱합니다
+   */
+  private async getTasksFromFiles(): Promise<string[]> {
+    try {
+      const { readFile } = await import('fs/promises');
+      const path = await import('path');
+      
+      const taskListPath = path.join(process.cwd(), 'docs', '태스크리스트.md');
+      const content = await readFile(taskListPath, 'utf-8');
+      
+      // T-XXX 패턴 매칭으로 태스크 ID 추출
+      const taskPattern = /^## (T-\d{3})\s+(.+)$/gm;
+      const tasks: string[] = [];
+      let match;
+      
+      while ((match = taskPattern.exec(content)) !== null) {
+        tasks.push(match[1]);
+      }
+      
+      return tasks.length > 0 ? tasks : ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012'];
+    } catch (error) {
+      console.warn('태스크리스트.md 파일 읽기 실패, 기본값 사용:', error);
+      // 파일을 읽을 수 없는 경우 기본 태스크 목록 반환
+      return ['T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012'];
+    }
+  }
+
+  /**
+   * 완료된 보고서 파일들을 검색합니다
+   */
+  private async getCompletedReports(): Promise<string[]> {
+    try {
+      const { readdir } = await import('fs/promises');
+      const path = await import('path');
+      
+      const docsPath = path.join(process.cwd(), 'docs');
+      const files = await readdir(docsPath);
+      
+      // T-XXX_COMPLETION_REPORT.md 패턴 매칭
+      const reportPattern = /^(T-\d{3})_COMPLETION_REPORT\.md$/;
+      const completedTasks = files
+        .filter(file => reportPattern.test(file))
+        .map(file => {
+          const match = file.match(reportPattern);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean) as string[];
+      
+      return completedTasks;
+    } catch (error) {
+      console.warn('완료 보고서 검색 실패:', error);
+      return [];
+    }
+  }
+
+  /**
    * 완료된 작업 수를 계산합니다
    */
   private async getCompletedTaskCount(): Promise<number> {
-    // Git 커밋 히스토리나 체크리스트를 분석하여 완료된 작업 수 계산
-    // 현재는 프로젝트 구조를 바탕으로 추정
-    
-    const indicators = [
-      // Next.js 프로젝트 설정 확인
-      this.checkFileExists('package.json'),
-      this.checkFileExists('next.config.js'),
-      this.checkFileExists('tailwind.config.ts'),
-      this.checkFileExists('tsconfig.json'),
-      
-      // 인증 시스템 확인
-      this.checkFileExists('lib/supabase/client.ts'),
-      this.checkFileExists('lib/supabase/server.ts'),
-      this.checkFileExists('middleware.ts'),
-      
-      // 데이터베이스 스키마 확인
-      this.checkFileExists('supabase/migrations'),
-      
-      // 기본 컴포넌트 확인
-      this.checkFileExists('components/ui'),
-      
-      // 테스트 설정 확인
-      this.checkFileExists('jest.config.js'),
-    ];
-
-    const completedCount = (await Promise.all(indicators)).filter(Boolean).length;
-    
-    // T-001 (프로젝트 초기 설정) 진행률을 기반으로 추정
-    if (completedCount >= 8) return 1; // T-001 완료
-    return 0;
+    // 완료된 보고서 파일 수를 기반으로 계산
+    const completedReports = await this.getCompletedReports();
+    return completedReports.length;
   }
 
   /**
@@ -101,25 +131,57 @@ export class ProgressDataCollector {
    * 현재 진행 중인 작업을 가져옵니다
    */
   private async getCurrentTask(): Promise<string> {
-    const completedCount = await this.getCompletedTaskCount();
+    const allTasks = await this.getTasksFromFiles();
+    const completedReports = await this.getCompletedReports();
     
-    // 마스터플랜 기반 작업 순서
-    const tasks = [
-      'T-001 프로젝트 초기 설정',
-      'T-002 인증 및 권한 시스템', 
-      'T-003 데이터베이스 스키마 및 RLS',
-      'T-004 핵심 데이터 모델',
-      'T-005 대시보드 시스템',
-      'T-006 6가지 뷰 시스템',
-      'T-007 실시간 협업 기능',
-      'T-008 자동화 엔진',
-      'T-009 UI 컴포넌트 라이브러리',
-      'T-010 PWA 및 오프라인 지원',
-      'T-011 접근성 및 최적화',
-      'T-012 테스팅 및 배포'
-    ];
+    // 완료되지 않은 첫 번째 태스크 찾기
+    for (const taskId of allTasks) {
+      if (!completedReports.includes(taskId)) {
+        // 태스크리스트에서 태스크 이름 가져오기
+        const taskName = await this.getTaskNameFromFile(taskId);
+        return `${taskId} ${taskName}`;
+      }
+    }
+    
+    // 모든 태스크가 완료된 경우
+    return 'T-012 테스팅 및 배포';
+  }
 
-    return tasks[completedCount] || tasks[tasks.length - 1];
+  /**
+   * 태스크리스트.md에서 특정 태스크의 이름을 가져옵니다
+   */
+  private async getTaskNameFromFile(taskId: string): Promise<string> {
+    try {
+      const { readFile } = await import('fs/promises');
+      const path = await import('path');
+      
+      const taskListPath = path.join(process.cwd(), 'docs', '태스크리스트.md');
+      const content = await readFile(taskListPath, 'utf-8');
+      
+      // 특정 태스크 ID에 해당하는 제목 찾기
+      const taskPattern = new RegExp(`^## ${taskId}\\s+(.+)$`, 'gm');
+      const match = taskPattern.exec(content);
+      
+      return match ? match[1] : '작업명 미확인';
+    } catch (error) {
+      // 기본 태스크 이름 매핑
+      const defaultNames: Record<string, string> = {
+        'T-001': '프로젝트 초기 설정',
+        'T-002': '인증 및 권한 시스템',
+        'T-003': '데이터베이스 스키마 및 RLS',
+        'T-004': '핵심 데이터 모델',
+        'T-005': '대시보드 시스템',
+        'T-006': '6가지 뷰 시스템',
+        'T-007': '실시간 협업 기능',
+        'T-008': '자동화 엔진',
+        'T-009': 'UI 컴포넌트 라이브러리',
+        'T-010': 'PWA 및 오프라인 지원',
+        'T-011': '접근성 및 최적화',
+        'T-012': '테스팅 및 배포'
+      };
+      
+      return defaultNames[taskId] || '작업명 미확인';
+    }
   }
 
   /**

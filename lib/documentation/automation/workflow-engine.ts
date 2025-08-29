@@ -15,7 +15,7 @@ import type {
 export interface WorkflowTrigger {
   id: string;
   name: string;
-  type: 'git_hook' | 'file_change' | 'schedule' | 'manual' | 'api_call';
+  type: 'git_hook' | 'file_change' | 'schedule' | 'manual' | 'api_call' | 'task_complete';
   enabled: boolean;
   conditions: Record<string, any>;
   actions: WorkflowAction[];
@@ -25,7 +25,7 @@ export interface WorkflowTrigger {
 
 export interface WorkflowAction {
   id: string;
-  type: 'generate_docs' | 'send_notification' | 'update_cache' | 'run_validation' | 'sync_realtime';
+  type: 'generate_docs' | 'send_notification' | 'update_cache' | 'run_validation' | 'sync_realtime' | 'generate_completion_report';
   config: Record<string, any>;
   retryCount?: number;
   timeout?: number;
@@ -184,6 +184,54 @@ export class WorkflowEngine extends EventEmitter {
           }
         }
       ]
+    });
+
+    // 태스크 완료 트리거
+    this.addTrigger({
+      id: 'task-completed',
+      name: '태스크 완료 보고서 생성',
+      type: 'task_complete',
+      enabled: true,
+      conditions: {
+        taskPattern: /^T-\d{3}$/  // T-001 ~ T-012 패턴
+      },
+      actions: [
+        {
+          id: 'generate-completion-report',
+          type: 'generate_completion_report',
+          config: {
+            reportType: 'task_completion',
+            includeProgress: true,
+            includeMetrics: true,
+            includeLessonsLearned: true
+          }
+        },
+        {
+          id: 'update-progress',
+          type: 'generate_docs',
+          config: {
+            documentType: 'progress',
+            updateOnly: true
+          }
+        },
+        {
+          id: 'sync-to-realtime',
+          type: 'sync_realtime',
+          config: {
+            updateType: 'task_completion'
+          }
+        },
+        {
+          id: 'notify-completion',
+          type: 'send_notification',
+          config: {
+            type: 'task_completion',
+            channels: ['dashboard'],
+            priority: 'normal'
+          }
+        }
+      ],
+      cooldown: 60 // 60초 쿨다운
     });
   }
 
@@ -370,6 +418,8 @@ export class WorkflowEngine extends EventEmitter {
         return this.validateFileChangeConditions(trigger.conditions, context);
       case 'api_call':
         return this.validateApiCallConditions(trigger.conditions, context);
+      case 'task_complete':
+        return this.validateTaskCompleteConditions(trigger.conditions, context);
       default:
         return true;
     }
@@ -448,6 +498,23 @@ export class WorkflowEngine extends EventEmitter {
   }
 
   /**
+   * 태스크 완료 조건 검증
+   */
+  private validateTaskCompleteConditions(
+    conditions: Record<string, any>,
+    context: Record<string, any>
+  ): boolean {
+    if (conditions.taskPattern && context.taskId) {
+      const pattern = conditions.taskPattern;
+      if (pattern instanceof RegExp) {
+        return pattern.test(context.taskId);
+      }
+      return context.taskId === conditions.taskPattern;
+    }
+    return true;
+  }
+
+  /**
    * 패턴 매칭
    */
   private matchPattern(text: string, pattern: string): boolean {
@@ -481,6 +548,8 @@ export class WorkflowEngine extends EventEmitter {
         return await this.executeValidationAction(action.config, context);
       case 'sync_realtime':
         return await this.executeSyncRealtimeAction(action.config, context);
+      case 'generate_completion_report':
+        return await this.executeGenerateCompletionReportAction(action.config, context);
       default:
         throw new Error(`지원되지 않는 액션 타입: ${action.type}`);
     }
@@ -590,6 +659,59 @@ export class WorkflowEngine extends EventEmitter {
 
     console.log(`🔄 실시간 동기화 완료: ${updateType}`);
     return `실시간 동기화 완료: ${updateType}`;
+  }
+
+  /**
+   * 태스크 완료 보고서 생성 액션 실행
+   */
+  private async executeGenerateCompletionReportAction(
+    config: Record<string, any>,
+    context: Record<string, any>
+  ): Promise<string> {
+    const taskId = context.taskId;
+    if (!taskId) {
+      throw new Error('태스크 ID가 필요합니다');
+    }
+
+    console.log(`📝 태스크 완료 보고서 생성 중: ${taskId}`);
+
+    // 태스크 정보 수집
+    const progressData = {
+      taskId,
+      taskName: context.taskName || `태스크 ${taskId}`,
+      completedAt: new Date(),
+      executionStartDate: context.startDate || new Date(),
+      executionEndDate: new Date(),
+      status: 'completed',
+      completedSubtasks: context.completedSubtasks || [],
+      pendingSubtasks: context.pendingSubtasks || [],
+      blockers: await this.progressCollector.getBlockers(),
+      nextSteps: context.nextSteps || await this.progressCollector.getNextSteps(),
+      metrics: await this.progressCollector.getProgressMetrics(),
+      lessonsLearned: context.lessonsLearned || [],
+      createdFiles: context.createdFiles || [],
+      modifiedFiles: context.modifiedFiles || [],
+      testResults: context.testResults || {},
+      recommendations: context.recommendations || []
+    };
+
+    // 템플릿 엔진을 사용하여 보고서 생성
+    const report = await this.templateEngine.generateCompletionReport(progressData);
+    
+    // 파일로 저장
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    
+    const reportPath = path.join(
+      process.cwd(), 
+      'docs', 
+      `${taskId}_COMPLETION_REPORT.md`
+    );
+    
+    await fs.writeFile(reportPath, report, 'utf-8');
+    console.log(`✅ 완료 보고서 생성됨: ${reportPath}`);
+    
+    return reportPath;
   }
 
   /**
