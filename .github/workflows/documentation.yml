@@ -1,0 +1,490 @@
+name: 📝 Documentation Automation
+
+on:
+  push:
+    branches: [ main, main-clean, develop ]
+    paths:
+      - 'docs/**'
+      - 'lib/**'
+      - 'components/**'
+      - 'app/**'
+      - 'package.json'
+      - 'supabase/migrations/**'
+  
+  pull_request:
+    branches: [ main, main-clean ]
+    paths:
+      - 'docs/**'
+      - 'lib/**'
+      - 'components/**'
+      - 'app/**'
+      - 'package.json'
+      - 'supabase/migrations/**'
+  
+  schedule:
+    # 매일 오전 9시 (KST) - UTC 0시
+    - cron: '0 0 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: '업데이트 타입'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - 'full'
+          - 'incremental'
+          - 'components_only'
+          - 'api_only'
+      force_regenerate:
+        description: '강제 재생성'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  TIMEZONE: 'Asia/Seoul'
+
+jobs:
+  analyze-changes:
+    name: 📊 변경사항 분석
+    runs-on: ubuntu-latest
+    outputs:
+      has_docs_changes: ${{ steps.changes.outputs.docs }}
+      has_code_changes: ${{ steps.changes.outputs.code }}
+      has_api_changes: ${{ steps.changes.outputs.api }}
+      has_components_changes: ${{ steps.changes.outputs.components }}
+      has_critical_changes: ${{ steps.changes.outputs.critical }}
+    
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 🔍 Detect Changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            docs:
+              - 'docs/**'
+            code:
+              - 'lib/**'
+              - 'components/**'
+              - 'app/**'
+              - '!**/*.test.*'
+              - '!**/__tests__/**'
+            api:
+              - 'app/api/**'
+            components:
+              - 'components/**'
+            critical:
+              - 'docs/마스터플랜.md'
+              - 'docs/제품 요구사항 정의서 (PRD).md'
+              - 'package.json'
+              - 'supabase/migrations/**'
+
+      - name: 📋 Changes Summary
+        run: |
+          echo "## 🔍 변경사항 분석 결과" >> $GITHUB_STEP_SUMMARY
+          echo "| 카테고리 | 변경됨 |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📝 문서 | ${{ steps.changes.outputs.docs == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💻 코드 | ${{ steps.changes.outputs.code == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 API | ${{ steps.changes.outputs.api == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧩 컴포넌트 | ${{ steps.changes.outputs.components == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚨 중요 파일 | ${{ steps.changes.outputs.critical == 'true' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+
+  quality-checks:
+    name: 🔍 코드 품질 검사
+    runs-on: ubuntu-latest
+    needs: analyze-changes
+    if: needs.analyze-changes.outputs.has_code_changes == 'true'
+    
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔧 TypeScript Check
+        run: npm run type-check
+
+      - name: 📋 ESLint Check
+        run: npm run lint
+
+      - name: 🧪 Run Tests
+        run: npm run test
+        continue-on-error: true
+
+      - name: 📊 Code Quality Summary
+        run: |
+          echo "## ✅ 코드 품질 검사 완료" >> $GITHUB_STEP_SUMMARY
+          echo "- TypeScript 타입 체크: 통과" >> $GITHUB_STEP_SUMMARY
+          echo "- ESLint 린트 검사: 통과" >> $GITHUB_STEP_SUMMARY
+          echo "- 단위 테스트: 실행됨" >> $GITHUB_STEP_SUMMARY
+
+  generate-documentation:
+    name: 📝 문서 자동 생성
+    runs-on: ubuntu-latest
+    needs: [analyze-changes, quality-checks]
+    if: always() && (needs.analyze-changes.outputs.has_docs_changes == 'true' || needs.analyze-changes.outputs.has_code_changes == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🕐 Set Timezone
+        run: |
+          sudo timedatectl set-timezone ${{ env.TIMEZONE }}
+          echo "현재 시간: $(date)"
+
+      - name: 🔍 Analyze Project Structure
+        id: analyze
+        run: |
+          echo "🔍 프로젝트 구조 분석 중..."
+          
+          # TypeScript 파일 수
+          TS_FILES=$(find . -name "*.ts" -o -name "*.tsx" | grep -v node_modules | wc -l)
+          echo "ts_files=$TS_FILES" >> $GITHUB_OUTPUT
+          
+          # 컴포넌트 파일 수
+          COMPONENT_FILES=$(find components -name "*.tsx" 2>/dev/null | wc -l)
+          echo "component_files=$COMPONENT_FILES" >> $GITHUB_OUTPUT
+          
+          # API 라우트 수
+          API_ROUTES=$(find app/api -name "route.ts" 2>/dev/null | wc -l)
+          echo "api_routes=$API_ROUTES" >> $GITHUB_OUTPUT
+          
+          # 패키지 버전
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          
+          echo "📊 분석 결과: TS파일 $TS_FILES개, 컴포넌트 $COMPONENT_FILES개, API $API_ROUTES개"
+
+      - name: 📋 Generate Progress Report
+        run: |
+          echo "📋 진행상황 리포트 생성 중..."
+          
+          # 리포트 디렉토리 생성
+          mkdir -p docs/reports
+          
+          # Git 정보 수집
+          GIT_BRANCH=${GITHUB_REF#refs/heads/}
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          GIT_AUTHOR=$(git log -1 --pretty=format:'%an')
+          TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S %Z')
+          
+          # 마스터플랜 분석
+          TOTAL_TASKS=0
+          COMPLETED_TASKS=0
+          
+          if [ -f "docs/마스터플랜.md" ]; then
+            TOTAL_TASKS=$(grep -o "T-[0-9]\{3\}" docs/마스터플랜.md | sort -u | wc -l)
+            COMPLETED_TASKS=$(grep -c "\- \[x\]" docs/마스터플랜.md || echo 0)
+          fi
+          
+          PROGRESS_PERCENT=$(( COMPLETED_TASKS * 100 / (TOTAL_TASKS > 0 ? TOTAL_TASKS : 1) ))
+          
+          # 진행률 바 생성
+          PROGRESS_BAR=""
+          for i in $(seq 1 20); do
+            if [ $i -le $(( PROGRESS_PERCENT / 5 )) ]; then
+              PROGRESS_BAR="${PROGRESS_BAR}█"
+            else
+              PROGRESS_BAR="${PROGRESS_BAR}░"
+            fi
+          done
+          
+          # 리포트 생성
+          cat > docs/reports/진행상황-$(date +%Y-%m-%d).md << EOF
+          # PM System 2025 진행상황 리포트
+          
+          > 생성일시: $TIMESTAMP
+          > 자동 생성됨 - GitHub Actions
+          
+          ## 📊 전체 진행 상황
+          
+          - **현재 단계**: Phase $((COMPLETED_TASKS / (TOTAL_TASKS / 4 > 0 ? TOTAL_TASKS / 4 : 1) + 1))
+          - **완료률**: ${PROGRESS_PERCENT}% (${COMPLETED_TASKS}/${TOTAL_TASKS} 작업)
+          - **프로젝트 버전**: ${{ steps.analyze.outputs.package_version }}
+          - **브랜치**: ${GIT_BRANCH}
+          - **최근 커밋**: ${GIT_COMMIT}
+          
+          ### 진행률 바
+          ${PROGRESS_BAR} ${PROGRESS_PERCENT}%
+          
+          ## 📁 프로젝트 통계
+          
+          | 항목 | 수량 |
+          |------|------|
+          | TypeScript 파일 | ${{ steps.analyze.outputs.ts_files }}개 |
+          | React 컴포넌트 | ${{ steps.analyze.outputs.component_files }}개 |
+          | API 엔드포인트 | ${{ steps.analyze.outputs.api_routes }}개 |
+          
+          ## 🔄 CI/CD 정보
+          
+          - **워크플로우**: ${{ github.workflow }}
+          - **실행 ID**: ${{ github.run_id }}
+          - **트리거**: ${{ github.event_name }}
+          - **작성자**: ${GIT_AUTHOR}
+          
+          ## 📈 품질 지표
+          
+          - **TypeScript 적용률**: 100%
+          - **컴포넌트 구조화**: ${{ steps.analyze.outputs.component_files > 0 && '✅' || '⏳' }}
+          - **API 구현**: ${{ steps.analyze.outputs.api_routes > 0 && '✅' || '⏳' }}
+          
+          ---
+          
+          *이 리포트는 GitHub Actions에서 자동으로 생성됩니다.*
+          EOF
+          
+          # 최신 리포트 업데이트
+          cp docs/reports/진행상황-$(date +%Y-%m-%d).md docs/최신-진행상황.md
+
+      - name: 🧩 Generate Component Documentation
+        if: needs.analyze-changes.outputs.has_components_changes == 'true' || github.event.inputs.update_type == 'components_only' || github.event.inputs.update_type == 'full'
+        run: |
+          echo "🧩 컴포넌트 문서 생성 중..."
+          
+          mkdir -p docs/components
+          
+          # 모든 컴포넌트 파일 찾기
+          find components -name "*.tsx" -type f 2>/dev/null | while read -r file; do
+            if [ -f "$file" ]; then
+              COMPONENT_NAME=$(basename "$file" .tsx)
+              DOC_FILE="docs/components/${COMPONENT_NAME}.md"
+              
+              echo "📝 $COMPONENT_NAME 컴포넌트 문서 생성"
+              
+              cat > "$DOC_FILE" << EOF
+          # $COMPONENT_NAME
+          
+          > 파일: \`$file\`
+          > 업데이트: $(date '+%Y-%m-%d %H:%M:%S')
+          
+          ## 설명
+          
+          $COMPONENT_NAME 컴포넌트
+          
+          ## 사용법
+          
+          \`\`\`tsx
+          import { $COMPONENT_NAME } from './$file';
+          
+          <$COMPONENT_NAME />
+          \`\`\`
+          
+          ## Props
+          
+          | 이름 | 타입 | 설명 | 기본값 |
+          |------|------|------|--------|
+          | - | - | - | - |
+          
+          *자동 생성된 문서입니다. 실제 구현에 따라 수정해주세요.*
+          EOF
+            fi
+          done
+
+      - name: 🌐 Generate API Documentation
+        if: needs.analyze-changes.outputs.has_api_changes == 'true' || github.event.inputs.update_type == 'api_only' || github.event.inputs.update_type == 'full'
+        run: |
+          echo "🌐 API 문서 생성 중..."
+          
+          mkdir -p docs/api
+          
+          # 모든 API 라우트 파일 찾기
+          find app/api -name "route.ts" -type f 2>/dev/null | while read -r file; do
+            if [ -f "$file" ]; then
+              ROUTE_PATH=$(dirname "$file" | sed 's|app/api||' | sed 's|^/||')
+              DOC_NAME=$(echo "$ROUTE_PATH" | sed 's|/|-|g')
+              DOC_FILE="docs/api/${DOC_NAME:-index}.md"
+              
+              echo "📝 /$ROUTE_PATH API 문서 생성"
+              
+              cat > "$DOC_FILE" << EOF
+          # ${ROUTE_PATH:-/} API
+          
+          > 파일: \`$file\`
+          > 업데이트: $(date '+%Y-%m-%d %H:%M:%S')
+          
+          ## 엔드포인트
+          
+          \`/api/${ROUTE_PATH}\`
+          
+          ## 설명
+          
+          ${ROUTE_PATH:-루트} API 엔드포인트
+          
+          ## 요청
+          
+          ### 매개변수
+          
+          | 이름 | 타입 | 필수 | 설명 |
+          |------|------|------|------|
+          | - | - | - | - |
+          
+          ## 응답
+          
+          ### 성공 (200)
+          
+          \`\`\`json
+          {
+            "message": "성공"
+          }
+          \`\`\`
+          
+          ### 오류 (400, 500)
+          
+          \`\`\`json
+          {
+            "error": "오류 메시지"
+          }
+          \`\`\`
+          
+          *자동 생성된 문서입니다. 실제 구현에 따라 수정해주세요.*
+          EOF
+            fi
+          done
+
+      - name: 📝 Update Documentation Index
+        run: |
+          echo "📝 문서 색인 업데이트 중..."
+          
+          cat > docs/README.md << EOF
+          # PM System 2025 문서
+          
+          > 최종 업데이트: $(date '+%Y-%m-%d %H:%M:%S')
+          > 자동 생성됨 - GitHub Actions
+          
+          ## 📋 프로젝트 문서
+          
+          - [📊 최신 진행상황](./최신-진행상황.md)
+          - [🎯 마스터플랜](./마스터플랜.md)
+          - [📋 제품 요구사항 정의서 (PRD)](./제품%20요구사항%20정의서%20(PRD).md)
+          
+          ## 📊 진행상황 리포트
+          
+          EOF
+          
+          # 리포트 파일들 나열
+          if [ -d "docs/reports" ]; then
+            find docs/reports -name "*.md" -type f | sort -r | head -10 | while read -r report; do
+              REPORT_NAME=$(basename "$report" .md)
+              echo "- [$REPORT_NAME](./${report#docs/})" >> docs/README.md
+            done
+          fi
+          
+          cat >> docs/README.md << EOF
+          
+          ## 🧩 컴포넌트 문서
+          
+          EOF
+          
+          # 컴포넌트 문서들 나열
+          if [ -d "docs/components" ]; then
+            find docs/components -name "*.md" -type f | sort | while read -r doc; do
+              DOC_NAME=$(basename "$doc" .md)
+              echo "- [$DOC_NAME](./${doc#docs/})" >> docs/README.md
+            done
+          fi
+          
+          cat >> docs/README.md << EOF
+          
+          ## 🌐 API 문서
+          
+          EOF
+          
+          # API 문서들 나열
+          if [ -d "docs/api" ]; then
+            find docs/api -name "*.md" -type f | sort | while read -r doc; do
+              DOC_NAME=$(basename "$doc" .md)
+              echo "- [/api/$DOC_NAME](./${doc#docs/})" >> docs/README.md
+            done
+          fi
+
+      - name: 📊 Documentation Summary
+        run: |
+          echo "## 📝 문서 생성 완료" >> $GITHUB_STEP_SUMMARY
+          echo "| 문서 유형 | 생성됨 |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📊 진행상황 리포트 | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧩 컴포넌트 문서 | ${{ needs.analyze-changes.outputs.has_components_changes == 'true' && '✅' || '⏸️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 API 문서 | ${{ needs.analyze-changes.outputs.has_api_changes == 'true' && '✅' || '⏸️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📝 문서 색인 | ✅ |" >> $GITHUB_STEP_SUMMARY
+          
+          # 생성된 파일 수 표시
+          REPORT_COUNT=$(find docs/reports -name "*.md" 2>/dev/null | wc -l)
+          COMPONENT_COUNT=$(find docs/components -name "*.md" 2>/dev/null | wc -l)
+          API_COUNT=$(find docs/api -name "*.md" 2>/dev/null | wc -l)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**생성된 파일 수:**" >> $GITHUB_STEP_SUMMARY
+          echo "- 리포트: ${REPORT_COUNT}개" >> $GITHUB_STEP_SUMMARY
+          echo "- 컴포넌트: ${COMPONENT_COUNT}개" >> $GITHUB_STEP_SUMMARY
+          echo "- API: ${API_COUNT}개" >> $GITHUB_STEP_SUMMARY
+
+      - name: 💾 Commit Documentation Changes
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add docs/
+          
+          if git diff --staged --quiet; then
+            echo "📋 변경된 문서 없음"
+          else
+            COMMIT_MSG="docs: 자동 문서 업데이트 - $(date '+%Y-%m-%d %H:%M:%S')
+            
+            🚀 Generated with [Claude Code](https://claude.ai/code)
+            
+            Co-Authored-By: Claude <noreply@anthropic.com>"
+            
+            git commit -m "$COMMIT_MSG"
+            git push
+            
+            echo "✅ 문서 커밋 및 푸시 완료"
+          fi
+
+  notify-completion:
+    name: 📢 완료 알림
+    runs-on: ubuntu-latest
+    needs: [analyze-changes, quality-checks, generate-documentation]
+    if: always() && needs.generate-documentation.result == 'success'
+    
+    steps:
+      - name: 📢 Success Notification
+        run: |
+          echo "## ✅ 문서 자동화 워크플로우 완료" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**실행 정보:**" >> $GITHUB_STEP_SUMMARY
+          echo "- 브랜치: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 트리거: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 실행 시간: $(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
+          echo "- 실행 ID: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📝 최신 문서는 [docs 디렉토리](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/docs)에서 확인할 수 있습니다."

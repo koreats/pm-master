@@ -1,0 +1,129 @@
+#!/usr/bin/env node
+
+// 📝 Pre-commit Git 훅
+// PM System 2025 - 커밋 전 문서 자동화 검증
+
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+console.log('🔍 Pre-commit 훅 실행 중...');
+
+try {
+  // 1. 변경된 파일 목록 가져오기
+  const stagedFiles = execSync('git diff --cached --name-only', { encoding: 'utf-8' })
+    .trim()
+    .split('\n')
+    .filter(file => file.length > 0);
+
+  console.log(`📁 변경된 파일: ${stagedFiles.length}개`);
+
+  // 2. 문서화 관련 파일 확인
+  const documentationFiles = stagedFiles.filter(file =>
+    file.endsWith('.md') ||
+    file.includes('docs/') ||
+    file === 'package.json' ||
+    file.includes('supabase/migrations/')
+  );
+
+  const codeFiles = stagedFiles.filter(file =>
+    file.endsWith('.ts') ||
+    file.endsWith('.tsx') ||
+    file.endsWith('.js') ||
+    file.endsWith('.jsx')
+  );
+
+  // 3. TypeScript 타입 체크
+  if (codeFiles.length > 0) {
+    console.log('🔧 TypeScript 타입 체크...');
+    try {
+      execSync('npm run type-check', { stdio: 'inherit' });
+      console.log('✅ TypeScript 타입 체크 통과');
+    } catch (error) {
+      console.error('❌ TypeScript 타입 체크 실패');
+      console.error('커밋을 진행하려면 타입 오류를 수정해주세요.');
+      process.exit(1);
+    }
+  }
+
+  // 4. ESLint 검사
+  if (codeFiles.length > 0) {
+    console.log('📋 ESLint 검사...');
+    try {
+      const lintableFiles = codeFiles
+        .filter(file => fs.existsSync(file))
+        .join(' ');
+        
+      if (lintableFiles) {
+        execSync(`npx eslint ${lintableFiles}`, { stdio: 'inherit' });
+        console.log('✅ ESLint 검사 통과');
+      }
+    } catch (error) {
+      console.error('❌ ESLint 검사 실패');
+      console.error('커밋을 진행하려면 린트 오류를 수정해주세요.');
+      process.exit(1);
+    }
+  }
+
+  // 5. 중요 문서 파일 변경 확인
+  const criticalFiles = [
+    'docs/마스터플랜.md',
+    'docs/제품 요구사항 정의서 (PRD).md',
+    'package.json'
+  ];
+
+  const changedCriticalFiles = documentationFiles.filter(file =>
+    criticalFiles.includes(file)
+  );
+
+  if (changedCriticalFiles.length > 0) {
+    console.log(`🚨 중요 문서 변경 감지: ${changedCriticalFiles.join(', ')}`);
+    
+    // 마스터플랜 변경 시 버전 확인
+    if (changedCriticalFiles.includes('docs/마스터플랜.md')) {
+      const masterPlanContent = fs.readFileSync('docs/마스터플랜.md', 'utf-8');
+      
+      // 날짜 형식 검증
+      const dateRegex = /\d{4}-\d{2}-\d{2}/;
+      if (!dateRegex.test(masterPlanContent)) {
+        console.warn('⚠️ 마스터플랜에 날짜 정보가 없거나 형식이 올바르지 않습니다.');
+      }
+      
+      // 작업 ID 형식 검증 (T-001, T-002 등)
+      const taskIdRegex = /T-\d{3}/g;
+      const taskIds = masterPlanContent.match(taskIdRegex) || [];
+      console.log(`📋 감지된 작업 ID: ${taskIds.length}개`);
+    }
+  }
+
+  // 6. 자동 문서 생성이 필요한 변경사항 확인
+  const needsDocGeneration = 
+    codeFiles.some(file => 
+      file.includes('components/') ||
+      file.includes('lib/') ||
+      file.includes('app/api/')
+    ) ||
+    documentationFiles.length > 0;
+
+  if (needsDocGeneration) {
+    console.log('📝 문서 자동 생성 필요 - post-commit 훅에서 처리됩니다.');
+    
+    // 메타데이터 저장 (post-commit에서 사용)
+    const metadata = {
+      stagedFiles,
+      documentationFiles,
+      codeFiles,
+      changedCriticalFiles,
+      timestamp: new Date().toISOString(),
+      needsDocGeneration
+    };
+    
+    fs.writeFileSync('.git/hooks/commit-metadata.json', JSON.stringify(metadata, null, 2));
+  }
+
+  console.log('✅ Pre-commit 검사 완료');
+
+} catch (error) {
+  console.error('❌ Pre-commit 훅 실행 실패:', error.message);
+  process.exit(1);
+}

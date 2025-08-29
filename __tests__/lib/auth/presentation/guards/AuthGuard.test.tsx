@@ -25,22 +25,28 @@ describe('AuthGuard', () => {
     mockUseRouter.mockReturnValue(mockRouter as any)
   })
 
-  const createMockUser = (overrides: Partial<any> = {}) => {
-    const roles = new Map<string, Role>()
-    roles.set('team-1', new Role(RoleType.MEMBER))
+  const createMockUser = (overrides: Partial<any> = {}): User => {
+    const user = User.create({
+      id: 'user-123',
+      email: 'test@example.com',
+      name: 'Test User'
+    })
     
-    return {
-      getId: () => 'user-123',
-      getEmail: () => new Email('test@example.com'),
-      getName: () => 'Test User',
-      getAllRoles: () => roles,
-      isEmailVerified: () => true,
-      isMfaEnabled: () => false,
-      isLocked: () => false,
-      getLockReason: () => null,
-      getLockedUntil: () => null,
-      ...overrides
-    } as User
+    // Set default role
+    user.assignRole('team-1', new Role(RoleType.MEMBER))
+    
+    // Apply overrides using Object.defineProperty to mock methods
+    Object.keys(overrides).forEach(key => {
+      if (typeof overrides[key] === 'function') {
+        Object.defineProperty(user, key, {
+          value: overrides[key],
+          writable: true,
+          configurable: true
+        })
+      }
+    })
+    
+    return user
   }
 
   describe('loading state', () => {

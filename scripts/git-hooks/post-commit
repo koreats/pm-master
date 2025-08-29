@@ -1,0 +1,223 @@
+#!/usr/bin/env node
+
+// 📝 Post-commit Git 훅
+// PM System 2025 - 커밋 후 문서 자동화 실행
+
+const { execSync, spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+console.log('🚀 Post-commit 훅 실행 중...');
+
+try {
+  // 1. 커밋 정보 가져오기
+  const commitHash = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  const commitMessage = execSync('git log -1 --pretty=%B', { encoding: 'utf-8' }).trim();
+  const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  const author = execSync('git log -1 --pretty=%an', { encoding: 'utf-8' }).trim();
+
+  console.log(`📝 커밋: ${commitHash.substring(0, 7)} - ${commitMessage}`);
+  console.log(`🌿 브랜치: ${branch}`);
+  console.log(`👤 작성자: ${author}`);
+
+  // 2. Pre-commit에서 저장한 메타데이터 읽기
+  const metadataPath = '.git/hooks/commit-metadata.json';
+  let metadata = null;
+  
+  if (fs.existsSync(metadataPath)) {
+    try {
+      metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+      fs.unlinkSync(metadataPath); // 사용 후 삭제
+    } catch (error) {
+      console.warn('⚠️ 메타데이터 읽기 실패:', error.message);
+    }
+  }
+
+  // 3. 현재 변경사항 분석
+  const changedFiles = execSync('git diff-tree --no-commit-id --name-only -r HEAD', { 
+    encoding: 'utf-8' 
+  }).trim().split('\n').filter(file => file.length > 0);
+
+  console.log(`📁 변경된 파일: ${changedFiles.length}개`);
+
+  // 4. 문서 자동 생성이 필요한지 확인
+  const needsDocGeneration = metadata?.needsDocGeneration ||
+    changedFiles.some(file =>
+      file.endsWith('.md') ||
+      file.includes('docs/') ||
+      file.includes('components/') ||
+      file.includes('lib/') ||
+      file.includes('app/api/') ||
+      file === 'package.json' ||
+      file.includes('supabase/migrations/')
+    );
+
+  if (!needsDocGeneration) {
+    console.log('📋 문서 생성 불필요 - 훅 종료');
+    return;
+  }
+
+  // 5. 백그라운드에서 문서 자동화 실행
+  console.log('📝 문서 자동화 시작...');
+
+  // 워크플로우 엔진 호출을 위한 API 요청
+  const documentationPayload = {
+    trigger: 'git-commit-hook',
+    context: {
+      commitHash,
+      commitMessage,
+      branch,
+      author,
+      changedFiles,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  // Next.js API가 실행 중인지 확인
+  try {
+    const { spawn } = require('child_process');
+    
+    // 비동기로 문서 생성 API 호출
+    const apiCall = spawn('curl', [
+      '-X', 'POST',
+      'http://localhost:3000/api/documentation/sync',
+      '-H', 'Content-Type: application/json',
+      '-d', JSON.stringify({
+        teamId: 'default', // 기본 팀 ID
+        forceUpdate: true,
+        updateType: 'git_commit',
+        ...documentationPayload
+      })
+    ], {
+      stdio: 'pipe',
+      detached: true
+    });
+
+    // 프로세스 분리하여 백그라운드에서 실행
+    apiCall.unref();
+
+    console.log('🔄 백그라운드 문서 자동화 시작됨');
+
+    // 로컬 파일 기반 문서 업데이트 (API 서버가 실행되지 않은 경우 대비)
+    const localDocUpdate = spawn('node', [
+      path.join(__dirname, '../automation/local-doc-update.js'),
+      JSON.stringify(documentationPayload)
+    ], {
+      stdio: 'pipe',
+      detached: true
+    });
+
+    localDocUpdate.unref();
+
+  } catch (apiError) {
+    console.warn('⚠️ API 호출 실패, 로컬 문서 업데이트 시도:', apiError.message);
+    
+    // 로컬 파일 시스템 기반 업데이트
+    try {
+      await updateDocumentsLocally(documentationPayload);
+    } catch (localError) {
+      console.error('❌ 로컬 문서 업데이트 실패:', localError.message);
+    }
+  }
+
+  // 6. Git 활동 로그 기록
+  const activityLog = {
+    timestamp: new Date().toISOString(),
+    type: 'git_commit',
+    branch,
+    commitHash,
+    commitMessage,
+    author,
+    changedFiles,
+    documentationTriggered: needsDocGeneration
+  };
+
+  const logDir = '.git/pm-system';
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
+  const logFile = path.join(logDir, `activity-${new Date().toISOString().split('T')[0]}.json`);
+  let existingLogs = [];
+  
+  if (fs.existsSync(logFile)) {
+    try {
+      existingLogs = JSON.parse(fs.readFileSync(logFile, 'utf-8'));
+    } catch (error) {
+      console.warn('⚠️ 기존 로그 읽기 실패:', error.message);
+    }
+  }
+
+  existingLogs.push(activityLog);
+  fs.writeFileSync(logFile, JSON.stringify(existingLogs, null, 2));
+
+  console.log('✅ Post-commit 훅 완료');
+
+} catch (error) {
+  console.error('❌ Post-commit 훅 실행 실패:', error.message);
+  // Post-commit 훅은 실패해도 커밋을 취소하지 않음
+}
+
+/**
+ * 로컬 문서 업데이트 (API 서버 없이)
+ */
+async function updateDocumentsLocally(payload) {
+  console.log('📄 로컬 문서 업데이트 시작...');
+  
+  const { changedFiles, commitMessage, branch } = payload.context;
+  
+  // 진행상황 업데이트가 필요한 파일 확인
+  const progressIndicators = [
+    'docs/마스터플랜.md',
+    'package.json',
+    'supabase/migrations/'
+  ];
+
+  const needsProgressUpdate = changedFiles.some(file =>
+    progressIndicators.some(indicator => file.includes(indicator))
+  );
+
+  if (needsProgressUpdate) {
+    // 간단한 진행상황 로그 업데이트
+    const progressLogPath = 'docs/진행상황-자동업데이트.md';
+    const timestamp = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+    
+    let progressContent = '';
+    if (fs.existsSync(progressLogPath)) {
+      progressContent = fs.readFileSync(progressLogPath, 'utf-8');
+    } else {
+      progressContent = '# PM System 2025 진행상황 자동 업데이트\n\n';
+    }
+
+    const updateEntry = `
+## ${timestamp}
+
+- **브랜치**: ${branch}
+- **커밋**: ${commitMessage}
+- **변경 파일**: ${changedFiles.length}개
+  ${changedFiles.map(file => `  - ${file}`).join('\n')}
+
+`;
+
+    // 최근 20개 항목만 유지
+    const entries = progressContent.split('## ').slice(1);
+    const recentEntries = entries.slice(0, 19);
+    
+    const updatedContent = '# PM System 2025 진행상황 자동 업데이트\n\n## ' + 
+      [updateEntry.trim().substring(2), ...recentEntries].join('\n## ');
+
+    fs.writeFileSync(progressLogPath, updatedContent);
+    console.log('📝 진행상황 로그 업데이트 완료');
+  }
+
+  // 컴포넌트 문서 자동 생성 (간단한 버전)
+  const componentFiles = changedFiles.filter(file =>
+    file.includes('components/') && 
+    (file.endsWith('.tsx') || file.endsWith('.ts'))
+  );
+
+  if (componentFiles.length > 0) {
+    console.log(`🧩 컴포넌트 문서 업데이트 필요: ${componentFiles.length}개`);
+    // 향후 구현: TypeScript AST 파싱 기반 컴포넌트 문서 생성
+  }
+}
