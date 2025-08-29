@@ -13,6 +13,11 @@ npm run type-check       # TypeScript 타입 체크
 npm run lint            # ESLint 검사
 npm run format          # Prettier 포맷팅
 
+# 테스트 실행
+npm run test            # Jest 단위 테스트 실행
+npm run test:watch      # 감시 모드로 테스트 실행
+npm run test:coverage   # 커버리지와 함께 테스트 실행
+
 # 빌드 & 배포
 npm run build           # 프로덕션 빌드
 npm run start           # 프로덕션 실행
@@ -316,6 +321,17 @@ Users ──┬──▶ TeamMembers ◀──┬── Teams
                             └──▶ Projects ──▶ Tasks
 ```
 
+**핵심 테이블 구조**:
+- `users`: Supabase auth.users 확장 (id, email, name, avatar_url)
+- `teams`: 팀 정보 (id, name, description, created_by)
+- `team_members`: 팀 멤버십 (team_id, user_id, role: owner|admin|member)
+- `goals`: 팀 목표 (team_id, title, status: active|completed|archived, progress 0-100)
+- `projects`: 프로젝트 (goal_id, title, status: planning|in_progress|review|completed|on_hold, priority)
+- `tasks`: 작업 (project_id, title, status: todo|in_progress|review|done|cancelled, assigned_to)
+- `comments`: 작업 댓글 (task_id, user_id, content)
+- `attachments`: 첨부파일 (task_id/project_id, file_url, file_size)
+- `activity_logs`: 활동 로그 (team_id, user_id, entity_type, entity_id, action)
+
 ---
 
 ## 🏗️ 프로젝트 특화 규칙
@@ -330,11 +346,17 @@ Users ──┬──▶ TeamMembers ◀──┬── Teams
 
 ### Supabase 통합
 
-- 클라이언트: `lib/supabase/client.ts` 사용
-- 서버: `lib/supabase/server.ts` 사용
-- 미들웨어: `lib/supabase/middleware.ts` 사용
+- 클라이언트: `lib/supabase/client.ts` 사용 (브라우저 환경)
+- 서버: `lib/supabase/server.ts` 사용 (서버 컴포넌트)
+- 미들웨어: `lib/supabase/middleware.ts` 사용 (인증 검증)
 - RLS(Row Level Security) 정책 필수 적용
 - 실시간 기능: `supabase/migrations/003_realtime_setup.sql` 참조
+
+**인증 플로우**:
+- 공개 경로: `/auth/login`, `/auth/signup`, `/auth/callback`, `/api/auth`
+- 미들웨어가 모든 경로에서 인증 상태 확인
+- 비인증 사용자는 로그인 페이지로 리다이렉트
+- 인증된 사용자는 세션 자동 갱신
 
 ### UI 컴포넌트
 
@@ -348,6 +370,14 @@ Users ──┬──▶ TeamMembers ◀──┬── Teams
 - 서버 상태: TanStack Query v5 사용
 - 클라이언트 상태: Zustand v4 사용
 - 폼 상태: React Hook Form + Zod 검증
+
+**TanStack Query 설정** (`components/providers.tsx`):
+- staleTime: 1분 (데이터 신선함 유지)
+- gcTime: 5분 (가비지 컬렉션)
+- refetchOnWindowFocus: false
+- retry: 1 (실패 시 1회 재시도)
+
+**Theme Provider**: next-themes 사용 (light 기본, system 지원)
 
 ### 파일 구조
 
@@ -390,8 +420,11 @@ npm run format:check # 포맷팅 검증 (CI용)
 
 ### 테스팅 전략
 
-- **현재 상태**: 테스트 프레임워크 미설정
-- **권장 설정**: Jest + React Testing Library (단위/통합) + Playwright (E2E)
+- **현재 설정**: Jest + React Testing Library + jsdom 환경
+- **테스트 실행**: `npm run test` (단일), `npm run test:watch` (감시), `npm run test:coverage` (커버리지)
+- **테스트 파일 위치**: `__tests__/` 디렉토리 (컴포넌트별 구조)
+- **설정 파일**: `jest.config.js`, `jest.setup.js`
+- **커버리지 대상**: `app/`, `components/`, `lib/` 디렉토리
 - **테스트 목표**:
   - 단위 테스트: 비즈니스 로직 및 유틸리티 (70%)
   - 통합 테스트: API 엔드포인트 및 데이터베이스 상호작용 (20%)
