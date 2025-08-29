@@ -25,6 +25,12 @@ npm run test:coverage   # Test with coverage report
 npm run test -- button.test.tsx                          # Test specific file
 npm run test:watch -- --testNamePattern="should render"  # Pattern matching
 npm run test -- --testPathPattern=components            # Test directory
+
+# Documentation Scripts
+npm run docs:init        # Initialize documentation templates
+npm run docs:sync        # Sync documentation to Supabase
+npm run docs:progress    # Generate progress report
+npm run docs:generate-report # Generate completion report
 ```
 
 ## 🏗️ Architecture Overview
@@ -211,6 +217,11 @@ The project includes an automated documentation system (`lib/documentation/`):
 - **Quality Management**: Document validation and quality scoring
 - **Realtime Sync**: Supabase Realtime integration
 - **API Endpoints**: `/api/documentation/[masterplan|sync|metrics|cache]`
+- **Automation Scripts**:
+  - `scripts/init-documentation.js` - Initialize documentation templates
+  - `scripts/sync-documentation.js` - Sync to Supabase
+  - `scripts/generate-progress-report.js` - Generate progress reports
+  - `scripts/generate-completion-report.js` - Generate completion reports
 
 ### GitHub Actions Workflow
 - Automatically generates documentation on push to main branches
@@ -284,6 +295,21 @@ The project includes an automated documentation system (`lib/documentation/`):
 4. Run `npm run type-check`
 5. Commit with refactor type
 
+### Common Debugging Commands
+```bash
+# Check TypeScript errors
+npm run type-check
+
+# Run specific component tests
+npm run test -- components/dashboard
+
+# Debug Supabase connection
+npx supabase db remote list
+
+# Check bundle size
+npm run build && npx next-bundle-analyzer
+```
+
 ## 📊 Environment Setup
 
 ```bash
@@ -327,5 +353,55 @@ This is **PM System 2025** - a lightweight project management tool designed for 
 - PWA support for offline functionality
 - ISMS-P compliant security standards
 - Automated documentation system
+
+### Common Implementation Patterns
+
+**Supabase Query Pattern**:
+```typescript
+// Use TanStack Query with Supabase
+import { useQuery } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
+
+const supabase = createClient()
+const { data, error } = useQuery({
+  queryKey: ['tasks'],
+  queryFn: async () => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    return data
+  },
+  staleTime: 60000, // 1 minute
+  gcTime: 300000,   // 5 minutes
+})
+```
+
+**Component Pattern with CVA**:
+```typescript
+// components/ui/custom-button.tsx
+import { cva } from 'class-variance-authority'
+
+const buttonVariants = cva(
+  'inline-flex items-center justify-center rounded-md',
+  {
+    variants: {
+      variant: {
+        default: 'bg-primary text-primary-foreground',
+        outline: 'border border-input bg-background',
+      },
+      size: {
+        default: 'h-10 px-4 py-2',
+        sm: 'h-9 px-3',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+      size: 'default',
+    },
+  }
+)
+```
 
 **Remember**: Keep it simple, secure, and performant. Focus on essential features for small team productivity.

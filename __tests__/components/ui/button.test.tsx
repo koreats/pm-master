@@ -47,4 +47,49 @@ describe('Button Component', () => {
     expect(link).toBeInTheDocument()
     expect(link).toHaveAttribute('href', '/test')
   })
+
+  it('renders with all variant types', () => {
+    const variants = ['default', 'destructive', 'outline', 'secondary', 'ghost', 'link'] as const
+    
+    const { container } = render(
+      <div>
+        {variants.map((variant, index) => (
+          <Button key={variant} variant={variant} data-testid={`variant-${variant}`}>
+            {variant}
+          </Button>
+        ))}
+      </div>
+    )
+    
+    variants.forEach(variant => {
+      const button = screen.getByTestId(`variant-${variant}`)
+      expect(button).toBeInTheDocument()
+    })
+  })
+
+  it('renders with all size types', () => {
+    const sizes = ['default', 'sm', 'lg', 'icon'] as const
+    
+    const { container } = render(
+      <div>
+        {sizes.map((size, index) => (
+          <Button key={size} size={size} data-testid={`size-${size}`}>
+            {size}
+          </Button>
+        ))}
+      </div>
+    )
+    
+    sizes.forEach(size => {
+      const button = screen.getByTestId(`size-${size}`)
+      expect(button).toBeInTheDocument()
+    })
+  })
+
+  it('accepts custom className and merges with variant classes', () => {
+    render(<Button className="custom-test-class" variant="outline">Custom</Button>)
+    const button = screen.getByRole('button', { name: /custom/i })
+    expect(button).toHaveClass('custom-test-class')
+    expect(button).toHaveClass('border-input') // from outline variant
+  })
 })
