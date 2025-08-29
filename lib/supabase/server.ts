@@ -1,11 +1,11 @@
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient as supabaseCreateServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types/supabase'
 
 export async function createClient() {
   const cookieStore = await cookies()
 
-  return createServerClient<Database>(
+  return supabaseCreateServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -30,7 +30,7 @@ export async function createClient() {
 export async function createServiceRoleClient() {
   const cookieStore = await cookies()
 
-  return createServerClient<Database>(
+  return supabaseCreateServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
@@ -49,3 +49,6 @@ export async function createServiceRoleClient() {
     }
   )
 }
+
+// 핵심 데이터 모델용 서버 클라이언트 (호환성을 위해 추가)
+export const createServerClient = createClient

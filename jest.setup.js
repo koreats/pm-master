@@ -28,6 +28,39 @@ global.ResizeObserver = jest.fn().mockImplementation(() => ({
   disconnect: jest.fn(),
 }))
 
+// Add Web API globals for Node.js test environment
+global.Request = class Request {
+  constructor(input, init = {}) {
+    this.url = input
+    this.method = init.method || 'GET'
+    this.headers = new global.Headers(init.headers)
+    this.body = init.body
+  }
+}
+
+global.Headers = class Headers {
+  constructor(init = {}) {
+    this.headers = new Map()
+    if (init) {
+      Object.entries(init).forEach(([key, value]) => {
+        this.set(key, value)
+      })
+    }
+  }
+  
+  set(name, value) {
+    this.headers.set(name.toLowerCase(), value)
+  }
+  
+  get(name) {
+    return this.headers.get(name.toLowerCase()) || null
+  }
+  
+  has(name) {
+    return this.headers.has(name.toLowerCase())
+  }
+}
+
 // Suppress console warnings in tests unless debugging
 const originalConsoleError = console.error
 const originalConsoleWarn = console.warn

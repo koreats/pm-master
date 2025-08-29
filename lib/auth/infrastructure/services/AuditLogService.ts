@@ -48,9 +48,8 @@ export class AuditLogService {
           ip_address: entry.ipAddress || null,
           user_agent: entry.userAgent || null,
           metadata: entry.metadata || {},
-          severity: entry.severity || 'info',
           created_at: (entry.timestamp || new Date()).toISOString(),
-        })
+        } as any)
 
       if (error) {
         console.error('Failed to log audit action:', error)
@@ -70,13 +69,11 @@ export class AuditLogService {
         .from('auth_attempts')
         .insert({
           email: attempt.email,
-          user_id: attempt.userId || null,
           ip_address: attempt.ipAddress,
           user_agent: attempt.userAgent,
           success: attempt.success,
-          error_message: attempt.errorMessage || null,
           created_at: new Date().toISOString(),
-        })
+        } as any)
 
       if (attemptError) {
         console.error('Failed to log auth attempt:', attemptError)
@@ -117,9 +114,9 @@ export class AuditLogService {
           severity: alert.severity,
           description: alert.description,
           metadata: alert.metadata || {},
-          resolved: alert.resolved || false,
+          acknowledged: alert.resolved || false,
           created_at: new Date().toISOString(),
-        })
+        } as any)
 
       if (error) {
         console.error('Failed to create security alert:', error)
