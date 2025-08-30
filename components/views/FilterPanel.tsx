@@ -45,7 +45,7 @@ import {
 } from '@/components/ui/accordion'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Slider } from '@/components/ui/slider'
-import type { FilterState } from '@/lib/views/types'
+import type { FilterState, TaskStatus, TaskPriority } from '@/lib/views/types'
 
 interface FilterPanelProps {
   /**
