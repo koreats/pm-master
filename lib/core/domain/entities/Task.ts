@@ -2,7 +2,7 @@ import { BaseEntity, CommonProps } from './BaseEntity'
 import { Project } from './Project'
 import type { Database } from '@/types/supabase'
 
-export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'cancelled'
+export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'cancelled' | 'completed'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
 
 export interface TaskProps extends CommonProps {

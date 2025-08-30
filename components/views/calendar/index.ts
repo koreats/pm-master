@@ -1,0 +1,5 @@
+export { CalendarView } from './CalendarView'
+export { CalendarGrid } from './CalendarGrid'
+export { CalendarEvent } from './CalendarEvent'
+export { useCalendar } from './hooks/useCalendar'
+export type { CalendarViewProps } from '@/lib/views/types'
